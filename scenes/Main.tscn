@@ -1,0 +1,29 @@
+[gd_scene load_steps=4 format=3 uid="uid://b1n8x7k3qj5wm"]
+
+[ext_resource type="Script" uid="uid://vn4q3uxwt1q" path="res://scripts/Main.gd" id="1"]
+[ext_resource type="Script" uid="uid://cta6618k6g7px" path="res://scripts/GridManager.gd" id="2"]
+[ext_resource type="Script" uid="uid://0ebknq6aimgm" path="res://scripts/SimulationEngine.gd" id="3"]
+
+[node name="Main" type="Node2D"]
+script = ExtResource("1")
+
+[node name="GridManager" type="Node" parent="."]
+script = ExtResource("2")
+
+[node name="SimulationEngine" type="Node" parent="."]
+script = ExtResource("3")
+
+[node name="VisualContainer" type="Node2D" parent="."]
+
+[node name="Camera2D" type="Camera2D" parent="."]
+position = Vector2(400, 400)
+
+[node name="UILayer" type="CanvasLayer" parent="."]
+
+[node name="RunPauseButton" type="Button" parent="UILayer"]
+offset_left = 16.0
+offset_top = 16.0
+offset_right = 140.0
+offset_bottom = 52.0
+focus_mode = 0
+text = "Run"
