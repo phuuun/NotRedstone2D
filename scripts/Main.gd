@@ -26,6 +26,13 @@ const CELL_SIZE: int = 16  # pixels per grid cell on screen
 
 @onready var run_pause_button: Button = $UILayer/RunPauseButton
 
+# Hotbar buttons, one per selectable mode. Index order matches the
+# order they're declared in the scene: Wire, Lever, Lamp, Erase.
+@onready var hotbar_wire_button: Button = $UILayer/Hotbar/WireButton
+@onready var hotbar_lever_button: Button = $UILayer/Hotbar/LeverButton
+@onready var hotbar_lamp_button: Button = $UILayer/Hotbar/LampButton
+@onready var hotbar_erase_button: Button = $UILayer/Hotbar/EraseButton
+
 # Container node that holds all CellVisual instances.
 @onready var visual_container: Node2D = $VisualContainer
 
@@ -44,6 +51,12 @@ func _ready() -> void:
 	simulation_engine.tick_completed.connect(_on_tick_completed)
 	run_pause_button.pressed.connect(_on_run_pause_pressed)
 
+	hotbar_wire_button.pressed.connect(_on_hotbar_pressed.bind(Component.ComponentType.WIRE))
+	hotbar_lever_button.pressed.connect(_on_hotbar_pressed.bind(Component.ComponentType.LEVER))
+	hotbar_lamp_button.pressed.connect(_on_hotbar_pressed.bind(Component.ComponentType.LAMP))
+	hotbar_erase_button.pressed.connect(_on_hotbar_pressed.bind(Component.ComponentType.EMPTY))
+	_update_hotbar_highlight()
+
 ## Instantiates one CellVisual per grid cell and positions it.
 func _build_visual_grid() -> void:
 	_visuals.clear()
@@ -51,10 +64,13 @@ func _build_visual_grid() -> void:
 		var column: Array = []
 		for y in range(GridManager.GRID_HEIGHT):
 			var visual := CellVisual.new()
-			visual.size = Vector2(CELL_SIZE - 1, CELL_SIZE - 1)  # -1 for grid lines
+			# Full cell size, no gap - CellVisual now draws its own
+			# 1px border in _draw(), so we don't need a literal gap
+			# between nodes to fake grid lines anymore.
+			visual.size = Vector2(CELL_SIZE, CELL_SIZE)
 			visual.position = Vector2(x * CELL_SIZE, y * CELL_SIZE)
 			visual_container.add_child(visual)
-			visual.setup(x, y, grid_manager)
+			visual.setup(x, y, grid_manager, CELL_SIZE)
 			column.append(visual)
 		_visuals.append(column)
 
@@ -100,13 +116,33 @@ func _handle_keyboard_selection(event: InputEvent) -> void:
 		return
 	match event.keycode:
 		KEY_1:
-			_selected_type = Component.ComponentType.WIRE
+			_set_selected_type(Component.ComponentType.WIRE)
 		KEY_2:
-			_selected_type = Component.ComponentType.LEVER
+			_set_selected_type(Component.ComponentType.LEVER)
 		KEY_3:
-			_selected_type = Component.ComponentType.LAMP
+			_set_selected_type(Component.ComponentType.LAMP)
 		KEY_0:
-			_selected_type = Component.ComponentType.EMPTY  # Erase mode
+			_set_selected_type(Component.ComponentType.EMPTY)  # Erase mode
+
+## Single entry point for changing the selected component, used by both
+## the keyboard shortcuts and the hotbar buttons, so the hotbar's
+## highlighted state can never drift out of sync with what's actually
+## selected regardless of which input path changed it.
+func _set_selected_type(type: int) -> void:
+	_selected_type = type
+	_update_hotbar_highlight()
+
+## Called when a hotbar button is pressed; bound with its component type.
+func _on_hotbar_pressed(type: int) -> void:
+	_set_selected_type(type)
+
+## Visually marks whichever hotbar button matches the current selection
+## as pressed/highlighted, and un-highlights the rest.
+func _update_hotbar_highlight() -> void:
+	hotbar_wire_button.button_pressed = (_selected_type == Component.ComponentType.WIRE)
+	hotbar_lever_button.button_pressed = (_selected_type == Component.ComponentType.LEVER)
+	hotbar_lamp_button.button_pressed = (_selected_type == Component.ComponentType.LAMP)
+	hotbar_erase_button.button_pressed = (_selected_type == Component.ComponentType.EMPTY)
 
 ## Space bar toggles Run/Pause, mirroring the on-screen button.
 func _handle_simulation_toggle_key(event: InputEvent) -> void:
