@@ -9,6 +9,10 @@
 ## Lever toggle is included here since it's pure input handling, but
 ## lever signal generation itself belongs to SimulationEngine (Phase 2).
 ##
+## Phase 6 added the repeater: clicking an existing repeater rotates its
+## facing instead of placing over it, mirroring how clicking an existing
+## lever toggles it rather than being replaced.
+##
 ## This script deliberately does NOT contain grid data or drawing logic -
 ## those live in GridManager and CellVisual respectively. Main.gd only
 ## coordinates between them.
@@ -27,10 +31,11 @@ const CELL_SIZE: int = 16  # pixels per grid cell on screen
 @onready var run_pause_button: Button = $UILayer/RunPauseButton
 
 # Hotbar buttons, one per selectable mode. Index order matches the
-# order they're declared in the scene: Wire, Lever, Lamp, Erase.
+# order they're declared in the scene: Wire, Lever, Lamp, Repeater, Erase.
 @onready var hotbar_wire_button: Button = $UILayer/Hotbar/WireButton
 @onready var hotbar_lever_button: Button = $UILayer/Hotbar/LeverButton
 @onready var hotbar_lamp_button: Button = $UILayer/Hotbar/LampButton
+@onready var hotbar_repeater_button: Button = $UILayer/Hotbar/RepeaterButton
 @onready var hotbar_erase_button: Button = $UILayer/Hotbar/EraseButton
 
 # Container node that holds all CellVisual instances.
@@ -54,6 +59,7 @@ func _ready() -> void:
 	hotbar_wire_button.pressed.connect(_on_hotbar_pressed.bind(Component.ComponentType.WIRE))
 	hotbar_lever_button.pressed.connect(_on_hotbar_pressed.bind(Component.ComponentType.LEVER))
 	hotbar_lamp_button.pressed.connect(_on_hotbar_pressed.bind(Component.ComponentType.LAMP))
+	hotbar_repeater_button.pressed.connect(_on_hotbar_pressed.bind(Component.ComponentType.REPEATER))
 	hotbar_erase_button.pressed.connect(_on_hotbar_pressed.bind(Component.ComponentType.EMPTY))
 	_update_hotbar_highlight()
 
@@ -110,7 +116,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	_handle_simulation_toggle_key(event)
 	_handle_mouse_click(event)
 
-## Keys 1/2/3 select Wire/Lever/Lamp; 0 selects Erase mode.
+## Keys 1/2/3/4 select Wire/Lever/Lamp/Repeater; 0 selects Erase mode.
 func _handle_keyboard_selection(event: InputEvent) -> void:
 	if not event is InputEventKey or not event.pressed:
 		return
@@ -121,6 +127,8 @@ func _handle_keyboard_selection(event: InputEvent) -> void:
 			_set_selected_type(Component.ComponentType.LEVER)
 		KEY_3:
 			_set_selected_type(Component.ComponentType.LAMP)
+		KEY_4:
+			_set_selected_type(Component.ComponentType.REPEATER)
 		KEY_0:
 			_set_selected_type(Component.ComponentType.EMPTY)  # Erase mode
 
@@ -142,6 +150,7 @@ func _update_hotbar_highlight() -> void:
 	hotbar_wire_button.button_pressed = (_selected_type == Component.ComponentType.WIRE)
 	hotbar_lever_button.button_pressed = (_selected_type == Component.ComponentType.LEVER)
 	hotbar_lamp_button.button_pressed = (_selected_type == Component.ComponentType.LAMP)
+	hotbar_repeater_button.button_pressed = (_selected_type == Component.ComponentType.REPEATER)
 	hotbar_erase_button.button_pressed = (_selected_type == Component.ComponentType.EMPTY)
 
 ## Space bar toggles Run/Pause, mirroring the on-screen button.
@@ -172,12 +181,17 @@ func _handle_left_click(x: int, y: int) -> void:
 	if cell == null:
 		return
 
-	# Clicking an existing lever ALWAYS toggles it instead of replacing it,
+	# Clicking an existing lever ALWAYS toggles it, and clicking an
+	# existing repeater ALWAYS rotates it, instead of replacing them -
 	# regardless of what's currently selected. This takes priority over
-	# placement so a stray click never silently overwrites a lever with
-	# whatever component happens to be selected.
+	# placement so a stray click never silently overwrites either one
+	# with whatever component happens to be selected.
 	if cell.component_type == Component.ComponentType.LEVER:
 		grid_manager.toggle_lever(x, y)
+		_refresh_cell_visual(x, y)
+		return
+	if cell.component_type == Component.ComponentType.REPEATER:
+		grid_manager.rotate_component(x, y)
 		_refresh_cell_visual(x, y)
 		return
 

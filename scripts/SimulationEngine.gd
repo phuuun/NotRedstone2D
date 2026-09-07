@@ -14,8 +14,17 @@
 ##   Phase 3: step 2 added - wires propagate signal from neighboring
 ##     levers/wires, resolved instantly within a single tick via
 ##     iterative relaxation (see _step_wire_propagation).
-##   Phase 4 (current): step 3 added - lamps read the strongest signal
-##     from their neighbors and turn on if it's greater than 0.
+##   Phase 4: step 3 added - lamps read the strongest signal from their
+##     neighbors and turn on if it's greater than 0.
+##   Phase 6 (current): repeaters joined the relaxation loop alongside
+##     wires. Unlike a wire, a repeater only accepts input from the one
+##     cell directly behind its facing direction, and outputs full
+##     signal strength (no decay) - it "refreshes" a signal instead of
+##     just relaying it. Directionality means every neighbor lookup now
+##     has to ask "does that neighbor actually point at me?" instead of
+##     assuming any adjacent lever/wire always transmits - see
+##     _signal_from_neighbor, which is the single place that answers
+##     that question for every caller (wire, repeater, and lamp alike).
 ## Each phase's logic gets its own private method below, called in order
 ## from run_tick(), so later phases are additions, not rewrites.
 
@@ -65,7 +74,7 @@ func _process(delta: float) -> void:
 
 ## Runs exactly one simulation step, in the order defined by the spec:
 ##   1. Levers generate signal
-##   2. Wires receive strongest neighboring signal minus 1
+##   2. Wires and repeaters propagate/refresh signal
 ##   3. Lamps update based on incoming signal
 func run_tick() -> void:
 	_step_lever_generation()
@@ -92,24 +101,29 @@ const _NEIGHBOR_OFFSETS: Array = [
 	Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)
 ]
 
-## Step 2: every wire cell receives the strongest signal among its
-## neighbors, minus the decay constant, clamped to [0, MAX_SIGNAL].
+## Step 2: every wire and repeater cell receives signal from its
+## neighbors - wires take the strongest neighboring signal minus decay,
+## repeaters take only the single cell behind their facing direction
+## and output full strength (or 0) with no decay.
 ##
 ## Per design decision: signal propagation should feel INSTANT within
 ## a single tick (matching Minecraft redstone), not crawl one tile per
-## tick. We get that by repeatedly relaxing the whole wire network
-## until no cell's value changes anymore (convergence), all within this
-## one call.
+## tick. We get that by repeatedly relaxing the whole network until no
+## cell's value changes anymore (convergence), all within this one call.
+## Wires and repeaters are relaxed together in the same pass since a
+## repeater can feed a wire and a wire can feed a repeater within the
+## same tick.
 ##
-## CRITICAL: every wire is reset to 0 before relaxing. If we instead
-## relaxed starting from last tick's values, a wire whose source just
-## turned off could keep getting "fed" by a stale-but-not-yet-decayed
-## neighbor (since relaxation only compares against the previous PASS,
-## not against an actual source), letting old signal persist or decay
-## far slower than it should. Resetting to 0 first means signal can
-## only re-enter the network from a true source (a lit lever) each
-## tick, so turning a lever off correctly drops the whole downstream
-## chain to 0 in the same tick it happens, not gradually.
+## CRITICAL: every wire/repeater is reset to 0 before relaxing. If we
+## instead relaxed starting from last tick's values, a cell whose
+## source just turned off could keep getting "fed" by a
+## stale-but-not-yet-decayed neighbor (since relaxation only compares
+## against the previous PASS, not against an actual source), letting
+## old signal persist or decay far slower than it should. Resetting to
+## 0 first means signal can only re-enter the network from a true
+## source (a lit lever) each tick, so turning a lever off correctly
+## drops the whole downstream chain to 0 in the same tick it happens,
+## not gradually.
 ##
 ## Each individual pass uses a snapshot-then-apply approach so a pass
 ## itself isn't order-dependent; we just run multiple passes back to
@@ -121,7 +135,7 @@ const _NEIGHBOR_OFFSETS: Array = [
 ## (e.g. dense wire loops) while still always reaching the true stable
 ## result in practice.
 func _step_wire_propagation() -> void:
-	_reset_all_wire_signals()
+	_reset_all_transmitter_signals()
 
 	var max_passes: int = GridManager.GRID_WIDTH + GridManager.GRID_HEIGHT
 	for _pass_index in range(max_passes):
@@ -131,9 +145,13 @@ func _step_wire_propagation() -> void:
 		for x in range(GridManager.GRID_WIDTH):
 			for y in range(GridManager.GRID_HEIGHT):
 				var cell: GridManager.Cell = grid_manager.get_cell(x, y)
-				if cell.component_type != Component.ComponentType.WIRE:
+				var new_signal: int
+				if cell.component_type == Component.ComponentType.WIRE:
+					new_signal = _wire_incoming_signal(x, y, previous_signals)
+				elif cell.component_type == Component.ComponentType.REPEATER:
+					new_signal = _repeater_incoming_signal(x, y, cell, previous_signals)
+				else:
 					continue
-				var new_signal: int = _strongest_incoming_signal(x, y, previous_signals)
 				if new_signal != cell.signal_strength:
 					cell.signal_strength = new_signal
 					changed = true
@@ -142,18 +160,20 @@ func _step_wire_propagation() -> void:
 		if not changed:
 			break
 
-## Zeroes out every wire cell's signal before a fresh propagation pass.
-## See _step_wire_propagation for why this reset is necessary.
-func _reset_all_wire_signals() -> void:
+## Zeroes out every wire/repeater cell's signal before a fresh
+## propagation pass. See _step_wire_propagation for why this reset is
+## necessary.
+func _reset_all_transmitter_signals() -> void:
 	for x in range(GridManager.GRID_WIDTH):
 		for y in range(GridManager.GRID_HEIGHT):
 			var cell: GridManager.Cell = grid_manager.get_cell(x, y)
-			if cell.component_type == Component.ComponentType.WIRE:
+			if cell.component_type == Component.ComponentType.WIRE \
+					or cell.component_type == Component.ComponentType.REPEATER:
 				cell.signal_strength = 0
 
-## Captures every cell's current signal_strength (levers and wires;
-## lamps don't transmit so they're excluded from neighbor lookups by
-## _strongest_incoming_signal regardless). Keyed by Vector2i position.
+## Captures every cell's current signal_strength (levers, wires, and
+## repeaters; lamps don't transmit so they're excluded from neighbor
+## lookups by _signal_from_neighbor regardless). Keyed by Vector2i position.
 func _snapshot_wire_signals() -> Dictionary:
 	var snapshot: Dictionary = {}
 	for x in range(GridManager.GRID_WIDTH):
@@ -162,32 +182,57 @@ func _snapshot_wire_signals() -> Dictionary:
 			snapshot[Vector2i(x, y)] = cell
 	return snapshot
 
-## Looks at the 4 orthogonal neighbors of (x, y) using the given
-## snapshot, and returns the strongest signal among neighbors that can
-## transmit (LEVER or WIRE). LAMP and EMPTY cells contribute nothing,
-## since lamps only consume signal and empty cells carry none. No
-## decay is applied here - callers decide whether decay applies to
-## their use case (wires decay by 1, lamps do not since they're a
-## sink rather than another link in the chain).
-func _strongest_neighbor_signal(x: int, y: int, previous_signals: Dictionary) -> int:
+## Returns how much signal flows from the neighbor at (x, y) + offset
+## into (x, y), given the snapshot. This is the single place that
+## understands transmission direction, so wire propagation, repeater
+## propagation, and lamp reads all agree on the same rules:
+##   - LEVER / WIRE transmit their signal_strength in all 4 directions.
+##   - REPEATER only transmits toward the cell its facing points at, so
+##     it contributes nothing unless offset (the direction from the
+##     neighbor to (x, y)) matches its facing.
+##   - EMPTY / LAMP never transmit (lamps are a sink, not a relay).
+func _signal_from_neighbor(x: int, y: int, offset: Vector2i, snapshot: Dictionary) -> int:
+	var neighbor_pos: Vector2i = Vector2i(x, y) + offset
+	if not snapshot.has(neighbor_pos):
+		return 0
+	var neighbor_cell: GridManager.Cell = snapshot[neighbor_pos]
+	match neighbor_cell.component_type:
+		Component.ComponentType.LEVER, Component.ComponentType.WIRE:
+			return neighbor_cell.signal_strength
+		Component.ComponentType.REPEATER:
+			if neighbor_cell.facing == -offset:
+				return neighbor_cell.signal_strength
+			return 0
+		_:
+			return 0
+
+## Strongest signal reaching (x, y) from any of its 4 orthogonal
+## neighbors, respecting each neighbor's transmission rules (see
+## _signal_from_neighbor). No decay is applied here - callers decide
+## whether decay applies to their use case (wires decay by 1, repeaters
+## and lamps do not).
+func _strongest_neighbor_signal(x: int, y: int, snapshot: Dictionary) -> int:
 	var strongest: int = 0
 	for offset in _NEIGHBOR_OFFSETS:
-		var neighbor_pos: Vector2i = Vector2i(x, y) + offset
-		if not previous_signals.has(neighbor_pos):
-			continue
-		var neighbor_cell: GridManager.Cell = previous_signals[neighbor_pos]
-		if neighbor_cell.component_type != Component.ComponentType.LEVER \
-				and neighbor_cell.component_type != Component.ComponentType.WIRE:
-			continue
-		strongest = max(strongest, neighbor_cell.signal_strength)
+		strongest = max(strongest, _signal_from_neighbor(x, y, offset, snapshot))
 	return strongest
 
-## Wire-specific wrapper: strongest neighboring signal, minus decay,
-## clamped to [0, MAX_SIGNAL]. Used by wire propagation.
-func _strongest_incoming_signal(x: int, y: int, previous_signals: Dictionary) -> int:
+## Wire-specific rule: strongest neighboring signal, minus decay,
+## clamped to [0, MAX_SIGNAL].
+func _wire_incoming_signal(x: int, y: int, previous_signals: Dictionary) -> int:
 	var strongest: int = _strongest_neighbor_signal(x, y, previous_signals)
 	var result: int = strongest - Component.SIGNAL_DECAY
 	return clamp(result, 0, Component.MAX_SIGNAL)
+
+## Repeater-specific rule: unlike a wire, a repeater ignores every
+## neighbor except the single cell directly behind its facing
+## direction. If that cell is feeding it any signal at all, the
+## repeater outputs full strength (no decay, no partial values) -
+## it refreshes a signal rather than relaying it faithfully.
+func _repeater_incoming_signal(x: int, y: int, cell: GridManager.Cell, previous_signals: Dictionary) -> int:
+	var input_offset: Vector2i = -cell.facing
+	var input_signal: int = _signal_from_neighbor(x, y, input_offset, previous_signals)
+	return Component.MAX_SIGNAL if input_signal > 0 else 0
 
 ## Step 3: every lamp cell reads the strongest signal among its
 ## neighbors (no decay applied - the lamp is a sink, not a relay) and

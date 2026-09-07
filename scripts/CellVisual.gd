@@ -32,6 +32,9 @@ const COLOR_LEVER_ON_HANDLE: Color = Color(1.0, 0.8, 0.2)
 const COLOR_LAMP_BASE: Color = Color(0.3, 0.3, 0.3)           # socket, same regardless of state
 const COLOR_LAMP_OFF_BULB: Color = Color(0.5, 0.5, 0.5)
 const COLOR_LAMP_ON_BULB: Color = Color(1.0, 0.95, 0.3)
+const COLOR_REPEATER_BASE: Color = Color(0.3, 0.3, 0.32)         # body, same regardless of state
+const COLOR_REPEATER_OFF_ARROW: Color = Color(0.5, 0.5, 0.55)
+const COLOR_REPEATER_ON_ARROW: Color = Color(0.3, 0.7, 1.0)
 const COLOR_GRID_LINE: Color = Color(0.0, 0.0, 0.0, 0.6)
 
 ## Sets up this visual cell to track a specific grid coordinate.
@@ -69,6 +72,8 @@ func _draw() -> void:
 			_draw_lever(full_rect, cell.lever_on)
 		Component.ComponentType.LAMP:
 			_draw_lamp(full_rect, cell.signal_strength > 0)
+		Component.ComponentType.REPEATER:
+			_draw_repeater(full_rect, cell.facing, cell.signal_strength > 0)
 		_:
 			draw_rect(full_rect, COLOR_EMPTY)
 
@@ -124,3 +129,26 @@ func _draw_lamp(rect: Rect2, is_on: bool) -> void:
 	# rather than just "a yellow circle".
 	if is_on:
 		draw_arc(center, radius * 1.35, 0, TAU, 24, Color(1.0, 0.95, 0.5, 0.4), 1.5)
+
+## Draws a repeater: a body (background) with an arrow pointing in its
+## facing direction, so which way it reads input from / outputs to is
+## visible at a glance without needing to click it. The arrow lights up
+## blue when the repeater currently has signal, dim gray when it doesn't.
+func _draw_repeater(rect: Rect2, facing: Vector2i, is_on: bool) -> void:
+	draw_rect(rect, COLOR_REPEATER_BASE)
+
+	var center: Vector2 = rect.position + rect.size * 0.5
+	var arrow_color: Color = COLOR_REPEATER_ON_ARROW if is_on else COLOR_REPEATER_OFF_ARROW
+	var direction: Vector2 = Vector2(facing)
+	var half_len: float = rect.size.x * 0.32
+	var thickness: float = max(2.0, rect.size.x * 0.12)
+
+	var tip: Vector2 = center + direction * half_len
+	var tail: Vector2 = center - direction * half_len
+	draw_line(tail, tip, arrow_color, thickness)
+
+	# Two short back-swept strokes at the tip form the arrowhead.
+	var perpendicular: Vector2 = direction.orthogonal() * half_len * 0.5
+	var head_back: Vector2 = tip - direction * half_len * 0.6
+	draw_line(tip, head_back + perpendicular, arrow_color, thickness)
+	draw_line(tip, head_back - perpendicular, arrow_color, thickness)

@@ -22,7 +22,12 @@ enum ComponentType {
 	WIRE,
 	LEVER,
 	LAMP,
+	REPEATER,
 }
+
+# Facing a repeater is placed with by default (pointing right/east).
+# GridManager.rotate_component() cycles a cell's facing away from this.
+const DEFAULT_FACING: Vector2i = Vector2i.RIGHT
 
 # Maximum signal strength any component can hold or transmit.
 const MAX_SIGNAL: int = 15
@@ -41,5 +46,7 @@ static func get_name_for(type: int) -> String:
 			return "Lever"
 		ComponentType.LAMP:
 			return "Lamp"
+		ComponentType.REPEATER:
+			return "Repeater"
 		_:
 			return "Unknown"

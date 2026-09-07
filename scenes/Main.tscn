@@ -34,9 +34,9 @@ anchor_left = 0.5
 anchor_top = 1.0
 anchor_right = 0.5
 anchor_bottom = 1.0
-offset_left = -210.0
+offset_left = -260.0
 offset_top = -68.0
-offset_right = 210.0
+offset_right = 260.0
 offset_bottom = -16.0
 grow_horizontal = 2
 grow_vertical = 0
@@ -63,6 +63,13 @@ layout_mode = 2
 focus_mode = 0
 toggle_mode = true
 text = "3: Lamp"
+
+[node name="RepeaterButton" type="Button" parent="UILayer/Hotbar"]
+custom_minimum_size = Vector2(96, 52)
+layout_mode = 2
+focus_mode = 0
+toggle_mode = true
+text = "4: Repeater"
 
 [node name="EraseButton" type="Button" parent="UILayer/Hotbar"]
 custom_minimum_size = Vector2(96, 52)

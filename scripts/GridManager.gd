@@ -21,6 +21,7 @@ class Cell:
 	var component_type: int = Component.ComponentType.EMPTY
 	var signal_strength: int = 0
 	var lever_on: bool = false  # Only meaningful when component_type == LEVER
+	var facing: Vector2i = Component.DEFAULT_FACING  # Only meaningful when component_type == REPEATER
 
 # 2D array of Cell, indexed as _cells[x][y]
 var _cells: Array = []
@@ -48,7 +49,9 @@ func get_cell(x: int, y: int) -> Cell:
 	return _cells[x][y]
 
 ## Places a component at (x, y), overwriting whatever was there.
-## Resets signal strength and lever state since it's a fresh placement.
+## Resets signal strength, lever state, and facing since it's a fresh
+## placement - a leftover facing/on-state from whatever used to occupy
+## this cell should never bleed into the new component.
 ## Does nothing if out of bounds.
 func place_component(x: int, y: int, type: int) -> void:
 	var cell: Cell = get_cell(x, y)
@@ -57,6 +60,7 @@ func place_component(x: int, y: int, type: int) -> void:
 	cell.component_type = type
 	cell.signal_strength = 0
 	cell.lever_on = false
+	cell.facing = Component.DEFAULT_FACING
 
 ## Removes whatever is at (x, y), turning it back into EMPTY.
 func remove_component(x: int, y: int) -> void:
@@ -68,3 +72,17 @@ func toggle_lever(x: int, y: int) -> void:
 	if cell == null or cell.component_type != Component.ComponentType.LEVER:
 		return
 	cell.lever_on = not cell.lever_on
+
+# Clockwise facing cycle (screen space, y-down): right -> down -> left -> up.
+const _ROTATION_ORDER: Array = [
+	Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT, Vector2i.UP
+]
+
+## Rotates a repeater's facing 90 degrees clockwise. No-op if the cell
+## isn't a repeater (rotation is meaningless for other component types).
+func rotate_component(x: int, y: int) -> void:
+	var cell: Cell = get_cell(x, y)
+	if cell == null or cell.component_type != Component.ComponentType.REPEATER:
+		return
+	var current_index: int = _ROTATION_ORDER.find(cell.facing)
+	cell.facing = _ROTATION_ORDER[(current_index + 1) % _ROTATION_ORDER.size()]
