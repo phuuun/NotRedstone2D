@@ -8,9 +8,9 @@
 ## from GridManager to decide what to draw.
 ##
 ## Phase 5: switched from a flat ColorRect to a custom _draw() based
-## Control. This lets each cell render a background fill PLUS a grid
-## border PLUS a simple icon shape (lever switch, lamp bulb) in one
-## pass, which a plain ColorRect can't do on its own.
+## Control. Style is black minimal (Apple dark-mode palette): empty
+## cells are a faint dot grid, wires are rounded traces that connect to
+## neighbouring components, and components sit on rounded tiles.
 
 extends Control
 class_name CellVisual
@@ -22,20 +22,19 @@ var cell_size: float = 16.0
 # Reference to the shared GridManager so this cell can read its own state.
 var grid_manager: GridManager = null
 
-# --- Palette ---
-const COLOR_EMPTY: Color = Color(0.15, 0.15, 0.15)
-const COLOR_WIRE_NO_SIGNAL: Color = Color(0.25, 0.04, 0.04)   # dark red, signal = 0
-const COLOR_WIRE_MAX_SIGNAL: Color = Color(1.0, 0.15, 0.1)    # bright red, signal = 15
-const COLOR_LEVER_BASE: Color = Color(0.35, 0.32, 0.3)        # mounting plate, same regardless of state
-const COLOR_LEVER_OFF_HANDLE: Color = Color(0.55, 0.45, 0.35)
-const COLOR_LEVER_ON_HANDLE: Color = Color(1.0, 0.8, 0.2)
-const COLOR_LAMP_BASE: Color = Color(0.3, 0.3, 0.3)           # socket, same regardless of state
-const COLOR_LAMP_OFF_BULB: Color = Color(0.5, 0.5, 0.5)
-const COLOR_LAMP_ON_BULB: Color = Color(1.0, 0.95, 0.3)
-const COLOR_REPEATER_BASE: Color = Color(0.3, 0.3, 0.32)         # body, same regardless of state
-const COLOR_REPEATER_OFF_ARROW: Color = Color(0.5, 0.5, 0.55)
-const COLOR_REPEATER_ON_ARROW: Color = Color(0.3, 0.7, 1.0)
-const COLOR_GRID_LINE: Color = Color(0.0, 0.0, 0.0, 0.6)
+# --- Palette (Apple dark-mode system colors) ---
+const COLOR_DOT: Color = Color("2c2c2e")
+const COLOR_TILE: Color = Color("1c1c1e")
+const COLOR_IDLE: Color = Color("3a3a3c")           # anything unpowered
+const COLOR_WIRE_WEAK: Color = Color("5c1f1a")      # signal = 1
+const COLOR_WIRE_STRONG: Color = Color("ff453a")    # signal = 15
+const COLOR_LEVER_ON: Color = Color("30d158")
+const COLOR_KNOB: Color = Color("f5f5f7")
+const COLOR_LAMP_ON: Color = Color("ffd60a")
+const COLOR_REPEATER_OFF: Color = Color("636366")
+const COLOR_REPEATER_ON: Color = Color("0a84ff")
+
+const NEIGHBOR_DIRS: Array[Vector2i] = [Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT, Vector2i.UP]
 
 ## Sets up this visual cell to track a specific grid coordinate.
 func setup(x: int, y: int, manager: GridManager, size: float) -> void:
@@ -61,94 +60,83 @@ func _draw() -> void:
 	if cell == null:
 		return
 
-	var full_rect: Rect2 = Rect2(Vector2.ZERO, Vector2(cell_size, cell_size))
+	var center: Vector2 = Vector2(cell_size, cell_size) * 0.5
 
 	match cell.component_type:
-		Component.ComponentType.EMPTY:
-			draw_rect(full_rect, COLOR_EMPTY)
 		Component.ComponentType.WIRE:
-			draw_rect(full_rect, _wire_color_for_signal(cell.signal_strength))
+			_draw_wire(center, cell.signal_strength)
 		Component.ComponentType.LEVER:
-			_draw_lever(full_rect, cell.lever_on)
+			_draw_lever(center, cell.lever_on)
 		Component.ComponentType.LAMP:
-			_draw_lamp(full_rect, cell.signal_strength > 0)
+			_draw_lamp(center, cell.signal_strength > 0)
 		Component.ComponentType.REPEATER:
-			_draw_repeater(full_rect, cell.facing, cell.signal_strength > 0)
+			_draw_repeater(center, cell.facing, cell.signal_strength > 0)
 		_:
-			draw_rect(full_rect, COLOR_EMPTY)
+			draw_circle(center, cell_size * 0.06, COLOR_DOT, true, -1.0, true)
 
-	# Grid border on every cell, drawn last so it sits on top of the fill.
-	draw_rect(full_rect, COLOR_GRID_LINE, false, 1.0)
+## Rounded rect helper, used for component tiles and the lever track.
+func _draw_rounded(rect: Rect2, color: Color, radius: float) -> void:
+	var box := StyleBoxFlat.new()
+	box.bg_color = color
+	box.set_corner_radius_all(int(radius))
+	draw_style_box(box, rect)
 
-## Maps a wire's signal strength (0-15) to a color along a gradient
-## from dark red (no signal) to bright red (full signal, 15). This
-## makes it possible to tell at a glance whether a wire is carrying a
-## strong signal near its source or a weak one near the end of its
-## range, instead of every non-zero signal looking identically "lit".
-func _wire_color_for_signal(signal_strength: int) -> Color:
-	var t: float = float(signal_strength) / float(Component.MAX_SIGNAL)
-	return COLOR_WIRE_NO_SIGNAL.lerp(COLOR_WIRE_MAX_SIGNAL, t)
+## Every non-wire component sits on the same rounded tile, inset 1px
+## so neighbouring tiles read as separate pieces.
+func _draw_tile() -> void:
+	_draw_rounded(Rect2(Vector2.ONE, Vector2.ONE * (cell_size - 2.0)), COLOR_TILE, cell_size * 0.22)
 
-## Draws a lever: a mounting plate (background) with a switch handle
-## drawn as a diagonal bar. The handle leans one way when OFF and the
-## other way when ON, plus a color change - so the ON/OFF state reads
-## clearly even without comparing colors side by side.
-func _draw_lever(rect: Rect2, is_on: bool) -> void:
-	draw_rect(rect, COLOR_LEVER_BASE)
+## Draws a wire as a rounded trace from the cell center to the edge of
+## every non-empty neighbour, so adjacent wires join into one continuous
+## line. Unpowered is gray; powered runs dark red (1) to bright red (15)
+## so signal strength along a line is readable at a glance.
+func _draw_wire(center: Vector2, signal_strength: int) -> void:
+	var color: Color = COLOR_IDLE
+	if signal_strength > 0:
+		var t: float = float(signal_strength) / float(Component.MAX_SIGNAL)
+		color = COLOR_WIRE_WEAK.lerp(COLOR_WIRE_STRONG, t)
+	var width: float = cell_size * 0.3
 
-	var center: Vector2 = rect.position + rect.size * 0.5
-	var handle_color: Color = COLOR_LEVER_ON_HANDLE if is_on else COLOR_LEVER_OFF_HANDLE
-	var half_len: float = rect.size.x * 0.3
-	var thickness: float = max(2.0, rect.size.x * 0.12)
+	for dir in NEIGHBOR_DIRS:
+		var neighbor: GridManager.Cell = grid_manager.get_cell(grid_x + dir.x, grid_y + dir.y)
+		if neighbor != null and neighbor.component_type != Component.ComponentType.EMPTY:
+			draw_line(center, center + Vector2(dir) * cell_size * 0.5, color, width, true)
+	# Round joint so corners and dead ends look smooth instead of square.
+	draw_circle(center, width * 0.5, color, true, -1.0, true)
 
-	# The handle pivots from the same anchor point but tips toward
-	# opposite corners depending on state, so the flip is unmistakable
-	# even at a glance.
-	var tip_offset: Vector2
+## Draws a lever as an iOS-style toggle switch: gray track with the knob
+## on the left when OFF, green track with the knob on the right when ON.
+func _draw_lever(center: Vector2, is_on: bool) -> void:
+	_draw_tile()
+	var track_size: Vector2 = Vector2(cell_size * 0.7, cell_size * 0.42)
+	var track: Rect2 = Rect2(center - track_size * 0.5, track_size)
+	_draw_rounded(track, COLOR_LEVER_ON if is_on else COLOR_IDLE, track_size.y * 0.5)
+
+	var knob_radius: float = track_size.y * 0.5 - 1.0
+	var knob_x: float = track.end.x - track_size.y * 0.5 if is_on else track.position.x + track_size.y * 0.5
+	draw_circle(Vector2(knob_x, center.y), knob_radius, COLOR_KNOB, true, -1.0, true)
+
+## Draws a lamp: a bulb dot that turns yellow with a soft halo when lit.
+func _draw_lamp(center: Vector2, is_on: bool) -> void:
+	_draw_tile()
+	var radius: float = cell_size * 0.22
 	if is_on:
-		tip_offset = Vector2(half_len * 0.6, -half_len)   # leaning up
-	else:
-		tip_offset = Vector2(half_len * 0.6, half_len)    # leaning down
+		# Halo kept inside the tile so later-drawn neighbours don't clip it.
+		draw_circle(center, cell_size * 0.46, Color(COLOR_LAMP_ON, 0.08), true, -1.0, true)
+		draw_circle(center, cell_size * 0.34, Color(COLOR_LAMP_ON, 0.18), true, -1.0, true)
+	draw_circle(center, radius, COLOR_LAMP_ON if is_on else COLOR_IDLE, true, -1.0, true)
 
-	var pivot: Vector2 = center + Vector2(-half_len * 0.3, half_len * 0.5)
-	draw_line(pivot, pivot + tip_offset, handle_color, thickness)
-	# Small base knob so the pivot point reads as an anchored switch.
-	draw_circle(pivot, thickness * 0.8, handle_color)
+## Draws a repeater as a double chevron pointing in its facing direction,
+## so which way it reads input from / outputs to is visible at a glance.
+## Blue when it currently has signal, gray when it doesn't.
+func _draw_repeater(center: Vector2, facing: Vector2i, is_on: bool) -> void:
+	_draw_tile()
+	var color: Color = COLOR_REPEATER_ON if is_on else COLOR_REPEATER_OFF
+	var dir: Vector2 = Vector2(facing)
+	var side: Vector2 = dir.orthogonal() * cell_size * 0.2
+	var depth: Vector2 = dir * cell_size * 0.1
+	var width: float = max(1.5, cell_size * 0.1)
 
-## Draws a lamp: a socket (background) with a bulb circle that's lit
-## yellow when ON, dim gray when OFF.
-func _draw_lamp(rect: Rect2, is_on: bool) -> void:
-	draw_rect(rect, COLOR_LAMP_BASE)
-
-	var center: Vector2 = rect.position + rect.size * 0.5
-	var radius: float = rect.size.x * 0.32
-	var bulb_color: Color = COLOR_LAMP_ON_BULB if is_on else COLOR_LAMP_OFF_BULB
-	draw_circle(center, radius, bulb_color)
-
-	# Faint outer glow ring when lit, to read as "emitting light"
-	# rather than just "a yellow circle".
-	if is_on:
-		draw_arc(center, radius * 1.35, 0, TAU, 24, Color(1.0, 0.95, 0.5, 0.4), 1.5)
-
-## Draws a repeater: a body (background) with an arrow pointing in its
-## facing direction, so which way it reads input from / outputs to is
-## visible at a glance without needing to click it. The arrow lights up
-## blue when the repeater currently has signal, dim gray when it doesn't.
-func _draw_repeater(rect: Rect2, facing: Vector2i, is_on: bool) -> void:
-	draw_rect(rect, COLOR_REPEATER_BASE)
-
-	var center: Vector2 = rect.position + rect.size * 0.5
-	var arrow_color: Color = COLOR_REPEATER_ON_ARROW if is_on else COLOR_REPEATER_OFF_ARROW
-	var direction: Vector2 = Vector2(facing)
-	var half_len: float = rect.size.x * 0.32
-	var thickness: float = max(2.0, rect.size.x * 0.12)
-
-	var tip: Vector2 = center + direction * half_len
-	var tail: Vector2 = center - direction * half_len
-	draw_line(tail, tip, arrow_color, thickness)
-
-	# Two short back-swept strokes at the tip form the arrowhead.
-	var perpendicular: Vector2 = direction.orthogonal() * half_len * 0.5
-	var head_back: Vector2 = tip - direction * half_len * 0.6
-	draw_line(tip, head_back + perpendicular, arrow_color, thickness)
-	draw_line(tip, head_back - perpendicular, arrow_color, thickness)
+	for offset in [-0.1, 0.1]:
+		var c: Vector2 = center + dir * cell_size * offset
+		draw_polyline(PackedVector2Array([c - depth + side, c + depth, c - depth - side]), color, width, true)
